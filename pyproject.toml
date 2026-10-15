@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lob-market-maker"
+version = "0.1.0"
+description = "A limit order book market-making simulator: a price-time-priority matching engine, synthetic order flow with informed traders, naive and Avellaneda-Stoikov market makers, and PnL attribution into spread capture, inventory and adverse selection."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Oscar Schjelderup" }]
+keywords = ["market making", "limit order book", "matching engine", "avellaneda-stoikov", "market microstructure", "simulation"]
+dependencies = [
+  "numpy>=1.26",
+  "pandas>=2.2",
+  "matplotlib>=3.8",
+  "typer>=0.12",
+  "rich>=13",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6", "hypothesis>=6.100"]
+
+[project.scripts]
+lobmm = "lobmm.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"  # OneDrive refuses the rename the cache plugin does
+filterwarnings = ["ignore::FutureWarning", "ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+  "E501",   # line length is a formatting matter, not something CI should fail on
+  "B008",   # typer declares CLI options as call-valued defaults
+]
