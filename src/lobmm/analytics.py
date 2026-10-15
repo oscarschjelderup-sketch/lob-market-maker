@@ -42,6 +42,7 @@ def summarize(res: SimResult) -> dict[str, Any]:
         "inv_max_abs": int(s["inventory"].abs().max()) if len(s) else 0,
         "at_limit": float((s["inventory"].abs() >= res.cfg.maker.max_inventory).mean()) if len(s) else 0.0,
         "avg_spread": float((s["best_ask"] - s["best_bid"]).mean()) if len(s) else float("nan"),
+        "quote_distance": float(((s["ask"] - s["bid"]) / 2.0).mean()) if len(s) and (s["ask"] - s["bid"]).notna().any() else float("nan"),
         "mid_vol": realised_vol(res.mid_t, res.mid, res.end_time),
         "end_mid": res.end_mid,
         "events": res.n_events,
@@ -83,6 +84,7 @@ AGGREGATE_MEANS = [
     "inv_max_abs",
     "at_limit",
     "avg_spread",
+    "quote_distance",
     "mid_vol",
     "impact",
 ]
@@ -132,10 +134,12 @@ def sweep(cfg: SimConfig, key: str, values: Sequence[Any], seeds: Sequence[int])
 DEFAULT_STRATEGIES: dict[str, dict[str, Any]] = {
     "naive h=3": {"maker.strategy": "naive", "maker.half_spread": 3},
     "A-S gamma=0.003": {"maker.strategy": "as", "maker.gamma": 0.003},
+    "A-S+adverse gamma=0.003": {"maker.strategy": "as_adverse", "maker.gamma": 0.003},
 }
 
 ABLATIONS: dict[str, dict[str, Any]] = {
     "A-S base": {"maker.strategy": "as"},
+    "+ adverse-selection term": {"maker.strategy": "as_adverse"},
     "+ latency 200 ms": {"maker.strategy": "as", "maker.latency": 0.2},
     "+ latency 1 s": {"maker.strategy": "as", "maker.latency": 1.0},
     "+ maker fee 0.5 bps": {"maker.strategy": "as", "maker.maker_fee_bps": 0.5},

@@ -69,18 +69,26 @@ class AvellanedaStoikovMaker(MarketMaker):
     Long inventory pushes both quotes down (more likely to sell, less likely to buy); higher risk aversion or
     volatility widens the spread and strengthens the skew. The spread shrinks towards (2/gamma) ln(1 + gamma/k)
     as the session ends, because there is less time for the inventory to hurt.
+
+    ``adverse`` is the adverse-selection term (price units), added to each side of the spread. The model derives
+    the spread for flow that is not informed, so a fill is worth its full distance from the mid; in a market
+    where a fill quoted at delta is worth only delta - a - b * delta a moment later, the risk-neutral optimum
+    moves out from 1/k to 1/k + a / (1 - b), and a / (1 - b) is the term (``lobmm calibrate`` measures it).
+    With a term the maker's name is ``as_adverse``.
     """
 
-    name = "as"
-
-    def __init__(self, gamma: float, sigma: float, k: float, horizon: float, tick: float) -> None:
+    def __init__(self, gamma: float, sigma: float, k: float, horizon: float, tick: float, adverse: float = 0.0) -> None:
         if gamma <= 0 or sigma <= 0 or k <= 0:
             raise ValueError("gamma, sigma and k must be positive")
+        if not math.isfinite(adverse):
+            raise ValueError("adverse must be a finite number of price units")
         self.gamma = gamma
         self.sigma = sigma
         self.k = k
         self.horizon = horizon
         self.tick = tick
+        self.adverse = adverse
+        self.name = "as_adverse" if adverse != 0.0 else "as"
 
     def reservation_price(self, mid_price: float, inventory: int, t: float) -> float:
         tau = max(self.horizon - t, 0.0)
@@ -90,10 +98,14 @@ class AvellanedaStoikovMaker(MarketMaker):
         tau = max(self.horizon - t, 0.0)
         return self.gamma * self.sigma**2 * tau + (2.0 / self.gamma) * math.log(1.0 + self.gamma / self.k)
 
+    def half_spread(self, t: float) -> float:
+        """What each quote sits from the reservation price: half the A-S spread plus the adverse-selection term."""
+        return self.optimal_spread(t) / 2.0 + self.adverse
+
     def quotes(self, snap: Snapshot, inventory: int, rng: np.random.Generator) -> tuple[int | None, int | None]:
         mid_price = snap.mid * self.tick
         reservation = self.reservation_price(mid_price, inventory, snap.t)
-        half = self.optimal_spread(snap.t) / 2.0
+        half = self.half_spread(snap.t)
         bid = math.floor((reservation - half) / self.tick)
         ask = math.ceil((reservation + half) / self.tick)
         if ask <= bid:
@@ -122,6 +134,8 @@ def make_maker(cfg: SimConfig) -> MarketMaker:
         return NaiveMaker(m.half_spread)
     if m.strategy == "as":
         return AvellanedaStoikovMaker(m.gamma, cfg.sigma, m.k, cfg.market.horizon, cfg.market.tick)
+    if m.strategy == "as_adverse":
+        return AvellanedaStoikovMaker(m.gamma, cfg.sigma, m.k, cfg.market.horizon, cfg.market.tick, adverse=m.adverse)
     if m.strategy == "probe":
         return ProbeMaker(m.probe_max_distance)
-    raise ValueError(f"unknown strategy {m.strategy!r}: use naive, as, probe or none")
+    raise ValueError(f"unknown strategy {m.strategy!r}: use naive, as, as_adverse, probe or none")

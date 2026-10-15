@@ -85,7 +85,7 @@ def _print_dict(d: dict[str, Any], title: str) -> None:
 
 @app.command()
 def run(
-    strategy: str = typer.Option("as", help="naive, as, probe or none"),
+    strategy: str = typer.Option("as", help="naive, as, as_adverse, probe or none"),
     seed: int = typer.Option(0),
     horizon: float = typer.Option(None, help="session length in seconds (default 3600)"),
     plot: bool = typer.Option(False, help="write the session figures to --out"),
@@ -151,13 +151,15 @@ def calibrate(
     seeds: int = typer.Option(3, help="number of probe sessions"),
     horizon: float = typer.Option(None),
     vol_dt: float = typer.Option(10.0, help="sampling interval for sigma, seconds"),
+    markout_horizon: float = typer.Option(10.0, help="horizon the adverse cost of a fill is measured at, seconds"),
     sets: list[str] = SetOption,
 ) -> None:
-    """Estimate sigma, A and k from probe sessions: the inputs of the Avellaneda-Stoikov quotes."""
+    """Estimate sigma, A, k and the adverse-selection term from probe sessions: the inputs of the A-S quotes."""
     from lobmm.calibrate import calibrate as _calibrate
 
     cfg = _config(horizon, sets)
-    cal = _calibrate(cfg, seeds=list(range(seeds)), vol_dt=vol_dt)
+    cal = _calibrate(cfg, seeds=list(range(seeds)), vol_dt=vol_dt, markout_horizon=markout_horizon)
+    tick = cfg.market.tick
     _print_dict(
         {
             "sigma (ticks / sqrt s)": cal.sigma_ticks,
@@ -166,13 +168,20 @@ def calibrate(
             "A (fills / s at the mid)": cal.fit.A,
             "k (per price unit)": cal.fit.k,
             "k (per tick)": cal.fit.k_ticks,
-            "R² of the fit": cal.fit.r2,
+            "R² of the intensity fit": cal.fit.r2,
+            f"adverse cost at {markout_horizon:g} s: a (ticks)": cal.markout.a / tick,
+            "adverse cost: b (per tick of distance)": cal.markout.b,
+            "R² of the cost fit": cal.markout.r2,
+            "adverse term a / (1 - b) (ticks)": cal.markout.adverse_term / tick,
+            "risk-neutral distance 1/k (ticks)": 1.0 / cal.fit.k_ticks,
+            "with the term (ticks)": cal.markout.optimal_distance(cal.fit.k) / tick,
             "probe sessions": cal.sessions,
         },
         "calibration",
     )
     _print_frame(cal.signature.to_frame(), "volatility signature")
     _print_frame(cal.fit.table.set_index("distance_ticks"), "fill intensity by distance from the mid")
+    _print_frame(cal.markout.table.set_index("distance_ticks"), f"adverse cost by distance, {markout_horizon:g} s after the fill (ticks per share)")
     console.print("use with:  " + " ".join(f"--set {k}={v:.5g}" for k, v in cal.as_overrides().items()))
 
 

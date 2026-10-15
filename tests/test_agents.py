@@ -13,8 +13,8 @@ from lobmm.config import SimConfig
 RNG = np.random.default_rng(0)
 
 
-def as_maker(gamma=0.1, sigma=0.02, k=40.0, horizon=3600.0, tick=0.01) -> AvellanedaStoikovMaker:
-    return AvellanedaStoikovMaker(gamma, sigma, k, horizon, tick)
+def as_maker(gamma=0.1, sigma=0.02, k=40.0, horizon=3600.0, tick=0.01, adverse=0.0) -> AvellanedaStoikovMaker:
+    return AvellanedaStoikovMaker(gamma, sigma, k, horizon, tick, adverse=adverse)
 
 
 def test_reservation_price_by_hand():
@@ -57,6 +57,22 @@ def test_spread_widens_with_risk_aversion_and_volatility():
         assert a1 - b1 > a0 - b0
 
 
+def test_adverse_term_widens_each_side_by_a_known_amount_and_leaves_the_rest_alone():
+    plain = as_maker()
+    wide = as_maker(adverse=0.01)  # one tick each side
+    assert wide.optimal_spread(0.0) == plain.optimal_spread(0.0), "the A-S spread itself is untouched"
+    assert wide.half_spread(0.0) == pytest.approx(plain.half_spread(0.0) + 0.01)
+    assert wide.half_spread(3600.0) == pytest.approx(10 * math.log(1.0025) + 0.01, abs=1e-9), "half the A-S spread plus the term"
+    assert wide.reservation_price(100.0, 10, 0.0) == plain.reservation_price(100.0, 10, 0.0), "the lean is untouched"
+    snap = Snapshot(0.0, 9999, 10001, 10000.0)
+    b0, a0 = plain.quotes(snap, 0, RNG)
+    b1, a1 = wide.quotes(snap, 0, RNG)
+    assert b1 == b0 - 1 and a1 == a0 + 1
+    assert plain.name == "as" and wide.name == "as_adverse"
+    with pytest.raises(ValueError):
+        as_maker(adverse=float("nan"))
+
+
 def test_as_quotes_never_cross_even_for_tiny_spreads():
     m = AvellanedaStoikovMaker(gamma=1e-6, sigma=1e-6, k=1e6, horizon=1.0, tick=0.01)
     bid, ask = m.quotes(Snapshot(0.0, 10000, 10001, 10000.5), 0, RNG)
@@ -93,6 +109,10 @@ def test_make_maker_factory():
     m = make_maker(SimConfig())
     assert isinstance(m, AvellanedaStoikovMaker)
     assert m.sigma == SimConfig().maker.sigma and m.k == SimConfig().maker.k
+    adv = make_maker(SimConfig().with_(**{"maker.strategy": "as_adverse", "maker.adverse": 0.02}))
+    assert isinstance(adv, AvellanedaStoikovMaker) and adv.adverse == 0.02 and adv.name == "as_adverse"
+    assert make_maker(SimConfig().with_(**{"maker.strategy": "as", "maker.adverse": 0.02})).adverse == 0.0, "plain A-S ignores the term"
+    assert make_maker(SimConfig().with_(**{"maker.strategy": "as_adverse"})).adverse == SimConfig().maker.adverse > 0, "the calibrated default"
     fallback = make_maker(SimConfig().with_(**{"maker.sigma": None}))
     assert fallback.sigma == pytest.approx(SimConfig().flow.fair_vol * SimConfig().market.tick), "sigma=None: the fair-value volatility"
     with pytest.raises(ValueError):

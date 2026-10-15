@@ -1,7 +1,8 @@
 """The figures: one palette, thin marks, a recessive grid, a legend whenever there is more than one series.
 
-Blue is the Avellaneda-Stoikov maker, orange the naive maker, aqua the fair value; depth in the heatmap is
-one blue ramp for bids and one orange ramp for asks; text is ink, never a series colour.
+Blue is the Avellaneda-Stoikov maker (dashed blue with the adverse-selection term), orange the naive maker,
+aqua the fair value; depth in the heatmap is one blue ramp for bids and one orange ramp for asks; text is ink,
+never a series colour.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import pandas as pd  # noqa: E402
 from matplotlib.colors import LinearSegmentedColormap  # noqa: E402
 
 from lobmm.book import BUY  # noqa: E402
-from lobmm.calibrate import IntensityFit  # noqa: E402
+from lobmm.calibrate import IntensityFit, MarkoutFit  # noqa: E402
 from lobmm.sim import SimResult  # noqa: E402
 
 SURFACE = "#fcfcfb"
@@ -205,18 +206,22 @@ def plot_attribution(agg: pd.DataFrame, path: Path, title: str = "PnL attributio
     return _save(fig, path)
 
 
-def plot_frontier(agg_as: pd.DataFrame, agg_naive: pd.DataFrame, path: Path) -> Path:
-    """Mean PnL against inventory risk: the A-S maker over its risk aversion, the naive maker over its spread."""
+def plot_frontier(agg_as: pd.DataFrame, agg_naive: pd.DataFrame, path: Path, agg_adverse: pd.DataFrame | None = None) -> Path:
+    """Mean PnL against inventory risk: the A-S maker over its risk aversion (with and without the adverse-selection
+    term), the naive maker over its spread."""
     fig, ax = _figure(height=4.8)
     # label placements alternate so that neighbouring points do not write over each other; the naive points
     # cluster at the right edge, so their odd labels go left-below, the A-S labels stay to the right of the curve
-    series = (
-        (agg_naive, ORANGE, "naive, by half-spread (ticks)", "h=", (((6, 6), "left"), ((-6, -12), "right"))),
-        (agg_as, BLUE, "Avellaneda-Stoikov, by gamma", "γ=", (((6, 6), "left"), ((6, -12), "left"))),
-    )
-    for agg, colour, label, prefix, placements in series:
+    # and the labels of the adverse variant to its left
+    series = [
+        (agg_naive, ORANGE, "-", "o", "naive, by half-spread (ticks)", "h=", (((6, 6), "left"), ((-6, -12), "right"))),
+        (agg_as, BLUE, "-", "o", "Avellaneda-Stoikov, by gamma", "γ=", (((6, 6), "left"), ((6, -12), "left"))),
+    ]
+    if agg_adverse is not None:
+        series.append((agg_adverse, BLUE, "--", "s", "A-S with the adverse-selection term, by gamma", "γ=", (((-7, 6), "right"), ((-7, -12), "right"))))
+    for agg, colour, ls, marker, label, prefix, placements in series:
         err = agg["pnl_std"] / np.sqrt(agg["seeds"])
-        ax.errorbar(agg["inv_std"], agg["pnl_mean"], yerr=err, color=colour, lw=1.2, marker="o", ms=5, capsize=2, label=label)
+        ax.errorbar(agg["inv_std"], agg["pnl_mean"], yerr=err, color=colour, lw=1.2, ls=ls, marker=marker, ms=5, capsize=2, label=label)
         for i, (value, xv, yv) in enumerate(zip(agg["value"], agg["inv_std"], agg["pnl_mean"], strict=True)):
             offset, align = placements[i % 2]
             ax.annotate(f"{prefix}{value:g}", (xv, yv), textcoords="offset points", xytext=offset, ha=align, fontsize=8, color=INK2)
@@ -226,14 +231,17 @@ def plot_frontier(agg_as: pd.DataFrame, agg_naive: pd.DataFrame, path: Path) -> 
     return _save(fig, path)
 
 
-def plot_markouts(agg: pd.DataFrame, horizons: tuple[float, ...], tick: float, path: Path) -> Path:
+def plot_markouts(agg: pd.DataFrame, horizons: tuple[float, ...], tick: float, path: Path, styles: dict[str, tuple[str, str]] | None = None) -> Path:
     """Per variant and horizon: the markout against the pre-trade mid, its drift part (after the mechanical impact
-    of the order that filled the maker), and what the fill was worth. Below zero is adverse."""
+    of the order that filled the maker), and what the fill was worth. Below zero is adverse. ``styles`` gives a
+    variant its own (colour, linestyle); the rest cycle through the palette."""
     fig, (ax_m, ax_d, ax_r) = _figure(1, 3, width=14.0, height=4.4)
-    for i, name in enumerate(agg.index):
-        colour = VARIANT_COLOURS[i % len(VARIANT_COLOURS)]
+    styles = styles or {}
+    cycled = [name for name in agg.index if name not in styles]
+    for name in agg.index:
+        colour, ls = styles[name] if name in styles else (VARIANT_COLOURS[cycled.index(name) % len(VARIANT_COLOURS)], "-")
         for ax, prefix in ((ax_m, "markout"), (ax_d, "drift"), (ax_r, "realised")):
-            ax.plot(horizons, [agg.loc[name, f"{prefix}_{h:g}"] / tick for h in horizons], color=colour, lw=1.6, marker="o", ms=5, label=name)
+            ax.plot(horizons, [agg.loc[name, f"{prefix}_{h:g}"] / tick for h in horizons], color=colour, lw=1.6, ls=ls, marker="o", ms=5, label=name)
     for ax, title, ylabel in (
         (ax_m, "markout: mid(t+h) against the pre-trade mid", "ticks per share, from the point of view of the maker"),
         (ax_d, "drift: mid(t+h) against the post-trade mid", "ticks per share"),
@@ -244,6 +252,8 @@ def plot_markouts(agg: pd.DataFrame, horizons: tuple[float, ...], tick: float, p
         ax.set_xticks(list(horizons))
         ax.set_xticklabels([f"{h:g} s" for h in horizons])
         _style(ax, title, xlabel="horizon after the fill", ylabel=ylabel)
+    lo, hi = ax_m.get_ylim()
+    ax_m.set_ylim(lo - (hi - lo) * 0.12 * len(agg.index), hi)  # room under the lines for the legend
     _legend(ax_m, loc="lower left")
     return _save(fig, path)
 
@@ -258,6 +268,40 @@ def plot_intensity(fit: IntensityFit, path: Path) -> Path:
     ax.set_yscale("log")
     _style(ax, "fill intensity against distance from the mid (probe maker)", xlabel="distance of the quote from the mid, ticks", ylabel="fills per second (log scale)")
     _legend(ax, loc="upper right")
+    return _save(fig, path)
+
+
+def plot_markout_fit(markout: MarkoutFit, fit: IntensityFit, tick: float, path: Path) -> Path:
+    """Left: the adverse cost of a fill against the distance it was quoted at, with the linear fit. Right: what a
+    quote earns per second at each distance, with and without that cost, and where the two optima sit."""
+    t = markout.table
+    fig, (ax_c, ax_p) = _figure(1, 2, width=13.0, height=4.6)
+    ax_c.plot(t["distance_ticks"], t["distance_ticks"], color=GRID, lw=1.2, ls=":", label="the whole distance (a fill worth nothing)")
+    ax_c.scatter(t["distance_ticks"], -t["markout_ticks"], s=26, facecolor=SURFACE, edgecolor=BLUE, lw=1.0, zorder=3, label=f"markout after the fill, {markout.horizon:g} s")
+    ax_c.scatter(t["distance_ticks"], t["cost_ticks"], color=BLUE, s=28, edgecolor=SURFACE, lw=0.6, zorder=4, label="adverse cost: distance quoted − realised spread")
+    xs = np.linspace(0, t["distance_ticks"].max() + 0.5, 100)
+    ax_c.plot(xs, (markout.a + markout.b * xs * tick) / tick, color=ORANGE, lw=1.6, label=f"fit  cost(δ) = {markout.a / tick:.2f} + {markout.b:.2f} δ   R² {markout.r2:.2f}")
+    ax_c.set_ylim(bottom=0)
+    _style(ax_c, "adverse cost of a fill against the distance it was quoted at (probe maker)", xlabel="distance of the quote from the mid, ticks", ylabel="ticks per share")
+    _legend(ax_c, loc="upper left")
+
+    k_ticks = fit.k_ticks
+    grid = np.linspace(0.25, max(t["distance_ticks"].max() + 0.5, 10.0), 200)
+    plain = fit.A * np.exp(-k_ticks * grid) * grid
+    net = fit.A * np.exp(-k_ticks * grid) * (grid - (markout.a + markout.b * grid * tick) / tick)
+    d_as, d_adv = 1.0 / k_ticks, markout.optimal_distance(fit.k) / tick
+    ax_p.plot(grid, plain, color=INK2, lw=1.4, ls="--", label="λ(δ) · δ   (Avellaneda-Stoikov: a fill is worth its distance)")
+    ax_p.plot(grid, net, color=BLUE, lw=1.8, label="λ(δ) · (δ − cost(δ))   (with the adverse cost)")
+    ax_p.axvline(d_as, color=INK2, lw=0.9, ls=":")
+    ax_p.axvline(d_adv, color=BLUE, lw=0.9, ls=":")
+    top = float(max(plain.max(), net.max()))
+    low = float(min(net.min(), -0.3 * top))  # room under the zero line for the labels of the two optima
+    ax_p.set_ylim(low * 1.08, top * 1.15)
+    ax_p.annotate(f"1/k = {d_as:.1f} ticks", (d_as, low * 0.45), xytext=(4, 0), textcoords="offset points", fontsize=8, color=INK2, va="center")
+    ax_p.annotate(f"1/k + a/(1−b) = {d_adv:.1f} ticks", (d_adv, low * 0.72), xytext=(4, 0), textcoords="offset points", fontsize=8, color=BLUE, va="center")
+    ax_p.axhline(0, color=INK2, lw=0.8)
+    _style(ax_p, "expected profit of one quote per second, against its distance", xlabel="distance of the quote from the mid, ticks", ylabel="ticks per second")
+    _legend(ax_p, loc="upper right")
     return _save(fig, path)
 
 

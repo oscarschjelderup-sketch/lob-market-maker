@@ -20,7 +20,7 @@ class CheckedSimulator(Simulator):
         super()._record_mid(t)
 
 
-@pytest.mark.parametrize("strategy", ["none", "naive", "as", "probe"])
+@pytest.mark.parametrize("strategy", ["none", "naive", "as", "as_adverse", "probe"])
 def test_book_invariants_hold_through_a_session(strategy):
     res = CheckedSimulator(SHORT.with_(**{"maker.strategy": strategy, "sample_interval": 10.0}), seed=1).run()
     assert res.n_events > 500

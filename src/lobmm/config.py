@@ -38,7 +38,8 @@ class FlowConfig:
 
 @dataclass(frozen=True)
 class MakerConfig:
-    """The market maker. ``strategy`` is one of ``naive``, ``as`` (Avellaneda-Stoikov), ``probe`` or ``none``."""
+    """The market maker. ``strategy`` is one of ``naive``, ``as`` (Avellaneda-Stoikov), ``as_adverse`` (the same
+    with the adverse-selection term ``adverse`` on each side of the spread), ``probe`` or ``none``."""
 
     strategy: str = "as"
     size: int = 5  # shares per quote
@@ -48,8 +49,10 @@ class MakerConfig:
     gamma: float = 0.003  # Avellaneda-Stoikov risk aversion (the gamma sweep in the README picks this)
     sigma: float | None = 0.0136  # A-S mid volatility, price units per sqrt(second); None = the fair_vol of the flow * tick
     k: float = 40.0  # A-S fill-intensity decay, per price unit
-    # sigma and k above are what ``lobmm calibrate`` finds on the default flow (1.36 ticks/sqrt(s) at 10 s, k = 40).
-    # Change the flow and they are stale: run ``lobmm calibrate`` again, or set sigma to None for the fair-value volatility.
+    adverse: float = 0.0227  # as_adverse: the adverse-selection term added to each side of the spread, price units (2.27 ticks)
+    # sigma, k and adverse above are what ``lobmm calibrate`` finds on the default flow (1.36 ticks/sqrt(s) at 10 s, k = 40,
+    # and an adverse cost of a + b * delta per fill at 10 s that puts the term at a / (1 - b)). Change the flow and they are
+    # stale: run ``lobmm calibrate`` again, or set sigma to None for the fair-value volatility.
     maker_fee_bps: float = 0.0  # fee on each passive fill, basis points of notional; negative = rebate
     taker_fee_bps: float = 0.0  # fee on each aggressive fill (the maker only takes when it flattens)
     latency: float = 0.0  # one-way delay, seconds, on both legs: book -> maker and maker -> exchange
